@@ -6,6 +6,7 @@ from tqdm import tqdm
 from utils import compute_iou
 import json
 import random
+from utils import processed_image
 
 TRAIN_IMAGE_ROOT = "WIDER_train/images"
 VAL_IMAGE_ROOT = "WIDER_val/images"
@@ -61,21 +62,21 @@ class WiderFace:
         information = tqdm(range(self.image_num), desc='generating data: ')
         for image_info in self.image_info:
             image = cv2.imread(image_info['image_path'])
+
             # x, y, x, y
             bboxes = np.array(image_info["bbox"]).astype(np.float32)
-            bboxes_wh = bboxes[..., [2, 3]] - bboxes[..., [0, 1]]
+            bboxes_wh = bboxes[..., 2:] - bboxes[..., :2]
             bboxes_area = bboxes_wh[..., 0] * bboxes_wh[..., 1]
 
-            h, w, c = image.shape
+            height, width, channel = image.shape
             # 1. crop 50 negative example from each image, iou < 0.3
             neg_num = 0
             while neg_num < 50:
-                size = np.random.randint(output_size, min(h, w) / 2)
-                nx, ny = np.random.randint(0, w - size), np.random.randint(0, h - size)
+                size = np.random.randint(output_size, min(width, height) / 2)
+                nx, ny = np.random.randint(0, width - size), np.random.randint(0, height - size)
                 crop_bbox = [nx, ny, nx + size, ny + size]
                 crop_area = size * size
                 iou = compute_iou(crop_bbox, bboxes, crop_area, bboxes_area)
-
                 cropped_img = image[crop_bbox[1]:crop_bbox[3], crop_bbox[0]:crop_bbox[2], :]
                 resize_img = cv2.resize(cropped_img, (output_size, output_size), interpolation=cv2.INTER_LINEAR)
 
@@ -92,15 +93,15 @@ class WiderFace:
             for bbox_id, bbox in enumerate(bboxes):
                 x1, y1, x2, y2 = bbox
                 box_w, box_h = bboxes_wh[bbox_id] + 1
-                if max(w, h) < 20 or x1 < 0 or y1 < 0:
+                if max(width, height) < 20 or x1 < 0 or y1 < 0:
                     continue
 
                 for i in range(5):
-                    size = np.random.randint(output_size, min(h, w) / 2)
+                    size = np.random.randint(output_size, min(height, width) / 2)
                     delta_x = np.random.randint(max(-size, -x1), box_w)
                     delta_y = np.random.randint(max(-size, -y1), box_h)
                     nx1, ny1 = int(max(0, x1 + delta_x)), int(max(0, y1 + delta_y))
-                    if nx1 + size > w or ny1 + size > h:
+                    if nx1 + size > width or ny1 + size > height:
                         continue
                     crop_bbox = np.array([nx1, ny1, nx1 + size, ny1 + size])
                     crop_area = size * size
@@ -131,7 +132,7 @@ class WiderFace:
                     ny1 = int(max(y1 + box_h / 2 + delta_y - size / 2, 0))
                     nx2 = nx1 + size
                     ny2 = ny1 + size
-                    if nx2 > w or ny2 > h:
+                    if nx2 > width or ny2 > height:
                         continue
                     crop_bbox = np.array([nx1, ny1, nx2, ny2])
                     crop_area = output_size * output_size
@@ -195,6 +196,8 @@ class MTCNNGenerator:
     def generator(self):
         for image_info in self.image_info:
             image = cv2.imread(os.path.join(self.model_dataset_path, image_info["image_name"]))
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            image = (image / 255. - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])
             offset = np.array(image_info["offset"])
             label = image_info["label"]
             image, offset, label = self.random_flip_images(image, offset, label)
@@ -210,7 +213,20 @@ class MTCNNGenerator:
         return dataset
 
 
+
+
 if __name__ == '__main__':
+    import matplotlib.pyplot as plt
+    import utils
+
     wider_face_dataset = '/media/cdut9c403/新加卷/darren/wider_face'
     dataset = WiderFace(wider_face_dataset, "train")
     dataset.pnet_generator(wider_face_dataset)
+
+    # for image_info in dataset.image_info:
+    #     image = cv2.imread(image_info['image_path'])
+    #     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    #     bboxes = np.array(image_info["bbox"]).astype(np.float32)
+    #
+    #     utils.display_instances(image, bboxes)
+    #     plt.show()

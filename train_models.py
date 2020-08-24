@@ -64,6 +64,8 @@ class Trainer:
         with tf.GradientTape() as tape:
             imgs, bboxes, labels = _inp
             cls_prob, bbox_pred = self.model(imgs, True)
+            cls_prob = tf.squeeze(cls_prob, [1, 2])
+            bbox_pred = tf.squeeze(bbox_pred , [1, 2])
             cls_loss = models.cls_ohem(cls_prob, labels)
             bbox_loss = models.bbox_ohem(bbox_pred, bboxes, labels)
             accuracy = cal_accuracy(cls_prob, labels)
@@ -85,22 +87,24 @@ class Trainer:
             if self.global_step % self.steps_pre_epoch == 0:
                 self.ckpt_manager.save(self.global_epoch)
                 self.global_epoch += 1
+                train_process.close()
+                train_process = tqdm(range(self.steps_pre_epoch), desc="Training: ")
             if self.global_epoch > self.epoch:
+                train_process.close()
                 break
-        train_process.close()
 
     def tensorboard(self, cls_loss, bbox_loss, accuracy):
         with self.summary_writer.as_default():
             current_lr = self.optimizer._get_hyper('learning_rate')(self.optimizer._iterations)
-            tf.summary.scalar("recode/learning_rate", current_lr, step=self.global_epoch)
-            tf.summary.scalar("loss/cls_loss", cls_loss, step=self.global_epoch)
-            tf.summary.scalar("loss/bbox_loss", bbox_loss, step=self.global_epoch)
-            tf.summary.scalar("recode/accuracy", accuracy, step=self.global_epoch)
+            tf.summary.scalar("recode/learning_rate", current_lr, step=self.global_step)
+            tf.summary.scalar("loss/cls_loss", cls_loss, step=self.global_step)
+            tf.summary.scalar("loss/bbox_loss", bbox_loss, step=self.global_step)
+            tf.summary.scalar("recode/accuracy", accuracy, step=self.global_step)
 
 
 dataset_path = '/media/cdut9c403/新加卷/darren/wider_face'
 generator = MTCNNGenerator(dataset_path, "PNet")
 
 pnet = models.PNet()
-trainer = Trainer(pnet, generator, "pnet", "/media/cdut9c403/新加卷/darren/logs/MTCNN/Pnet", 384, 30, 0.001)
+trainer = Trainer(pnet, generator, "pnet", "/media/cdut9c403/新加卷/darren/logs/MTCNN/Pnet", 384, 18, 0.001)
 trainer.train()
