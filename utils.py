@@ -281,6 +281,8 @@ def display_instances(image, boxes, class_names=None, class_ids=None,
             # Skip this instance. Has no bbox. Likely lost in image cropping.
             continue
         x1, y1, x2, y2 = boxes[i]
+        h = y2 - y1
+        w = x2 - x1
         p = patches.Rectangle((x1, y1), x2 - x1, y2 - y1, linewidth=2,
                               alpha=0.7, linestyle="dashed",
                               edgecolor=color, facecolor='none')
@@ -295,6 +297,6 @@ def display_instances(image, boxes, class_names=None, class_ids=None,
                 color=color, size=12, backgroundcolor="none")
         if landmarks is not None:
             for landmark in landmarks[i]:
-                c = patches.Circle(landmark, radius=6, edgecolor=(1,0,0), facecolor='none')
+                c = patches.Circle(landmark, radius=(h/25 + w/25)/2, edgecolor=(1,0,0), facecolor='none')
                 ax.add_patch(c)
     ax.imshow(masked_image.astype(np.uint8), aspect='equal')

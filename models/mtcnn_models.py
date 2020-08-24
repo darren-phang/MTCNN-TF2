@@ -1,7 +1,5 @@
-import tensorflow as tf
 import tensorflow.keras.layers as layers
 from utils import *
-import time
 import cv2
 
 
@@ -246,7 +244,7 @@ if __name__ == '__main__':
     ckpt.restore("../data/pnet/ckpt-18")
     ckpt.restore("../data/rnet/ckpt-14")
     ckpt.restore("../data/onet/ckpt-16")
-    image_dir = "/media/cdut9c403/新加卷/darren/wider_face/WIDER_val/images/1--Handshaking/1_Handshaking_Handshaking_1_107.jpg"
+    image_dir = "/media/cdut9c403/新加卷/darren/wider_face/WIDER_val/images/28--Sports_Fan/28_Sports_Fan_Sports_Fan_28_487.jpg"
     image = cv2.imread(image_dir)
     roi, score, _ = pnet.detect(image, thresh=0.6)
     roi, score, _ = rnet.detect(image, roi)
