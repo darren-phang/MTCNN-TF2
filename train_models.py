@@ -4,6 +4,8 @@ import tensorflow as tf
 from utils import cal_accuracy
 from tqdm import tqdm
 import os
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 class WarmupCosineDecay(tf.keras.optimizers.schedules.LearningRateSchedule):
@@ -40,32 +42,31 @@ class Trainer:
                  logdir,
                  batch_size=384,
                  epoch=30,
-                 learning_rate=0.001):
+                 learning_rate=0.001,
+                 step_pre_epoch=2000):
         self.model = model
         self.generator = generator.get_generator(batch_size)
         self.global_epoch = 1
         self.global_step = 1
         self.epoch = epoch
-        self.steps_pre_epoch = generator.image_number // batch_size
+        self.steps_pre_epoch = step_pre_epoch
 
         lr_schedule = WarmupCosineDecay(warmup_start=learning_rate * 0.001,
                                         warmup_steps=5 * self.steps_pre_epoch,
                                         initial_learning_rate=learning_rate,
                                         decay_steps=(epoch - 5) * self.steps_pre_epoch,
                                         alpha=0.0)
-        self.optimizer = tf.optimizers.SGD(learning_rate=lr_schedule)
+        self.optimizer = tf.optimizers.SGD(learning_rate=lr_schedule, momentum=0.9)
         model_save_dict = {model_name: self.model}
         self.ckpt = tf.train.Checkpoint(**model_save_dict)
         self.ckpt_manager = tf.train.CheckpointManager(self.ckpt, logdir, max_to_keep=3)
         self.summary_writer = tf.summary.create_file_writer(os.path.join(logdir, "summary"), name="train")
 
-    @tf.function
+    # @tf.function
     def train_step(self, _inp):
         with tf.GradientTape() as tape:
             imgs, bboxes, labels = _inp
-            cls_prob, bbox_pred = self.model(imgs, True)
-            cls_prob = tf.squeeze(cls_prob, [1, 2])
-            bbox_pred = tf.squeeze(bbox_pred , [1, 2])
+            cls_prob, bbox_pred, landmark_pred = self.model(imgs, True)
             cls_loss = models.cls_ohem(cls_prob, labels)
             bbox_loss = models.bbox_ohem(bbox_pred, bboxes, labels)
             accuracy = cal_accuracy(cls_prob, labels)
@@ -101,10 +102,11 @@ class Trainer:
             tf.summary.scalar("loss/bbox_loss", bbox_loss, step=self.global_step)
             tf.summary.scalar("recode/accuracy", accuracy, step=self.global_step)
 
-
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 dataset_path = '/media/cdut9c403/新加卷/darren/wider_face'
-generator = MTCNNGenerator(dataset_path, "PNet")
+generator = MTCNNGenerator(dataset_path, "PNet_TFRCORD")
 
 pnet = models.PNet()
-trainer = Trainer(pnet, generator, "pnet", "/media/cdut9c403/新加卷/darren/logs/MTCNN/Pnet", 384, 18, 0.001)
+trainer = Trainer(pnet, generator, "pnet", "/media/cdut9c403/新加卷/darren/logs/MTCNN/Pnet",
+                  384, 18, 0.001)
 trainer.train()

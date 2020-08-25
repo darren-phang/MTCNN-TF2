@@ -1,5 +1,6 @@
 import tensorflow.keras.layers as layers
 from utils import *
+import time
 import cv2
 
 
@@ -28,6 +29,10 @@ class PNet(tf.keras.Model):
         cls_prob = self.cls(x)
         bbox_pred = self.box(x)
         landmark_pred = self.landmark(x)
+        if training:
+            cls_prob = tf.squeeze(cls_prob, [1, 2])
+            bbox_pred = tf.squeeze(bbox_pred, [1, 2])
+            landmark_pred = tf.squeeze(landmark_pred, [1, 2])
         return cls_prob, bbox_pred, landmark_pred
 
     def detect(self, img, net_size=12, min_ob_size=20,
@@ -38,7 +43,9 @@ class PNet(tf.keras.Model):
         current_height, current_width, _ = im_resized.shape
         all_boxes = list()
         while min(current_height, current_width) > net_size:
+            start_time = time.time()
             cls_cls_map, reg, _ = self.call(tf.expand_dims(im_resized, axis=0), training=False)
+            print(time.time() - start_time)
             boxes = generate_bbox(cls_cls_map.numpy()[0, :, :, 1], reg.numpy()[0],
                                   2, net_size, current_scale, thresh)
 
@@ -220,7 +227,7 @@ class ONet(tf.keras.Model):
             boxes = dets[keep_inds]
             scores = cls_scores[keep_inds]
             reg = reg[keep_inds]
-            landmark =landmark[keep_inds]
+            landmark = landmark[keep_inds]
         else:
             print("a")
             return None, None, None
@@ -236,19 +243,22 @@ class ONet(tf.keras.Model):
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
+    import os
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
     pnet = PNet()
     rnet = RNet()
     onet = ONet()
     ckpt = tf.train.Checkpoint(pnet=pnet, rnet=rnet, onet=onet)
-    ckpt.restore("../data/pnet/ckpt-18")
-    ckpt.restore("../data/rnet/ckpt-14")
-    ckpt.restore("../data/onet/ckpt-16")
+    ckpt.restore("/media/cdut9c403/新加卷/darren/logs/MTCNN/Pnet/ckpt-18")
+    # ckpt.restore("../data/pnet/ckpt-18")
+    # ckpt.restore("../data/rnet/ckpt-14")
+    # ckpt.restore("../data/onet/ckpt-16")
     image_dir = "/media/cdut9c403/新加卷/darren/wider_face/WIDER_val/images/28--Sports_Fan/28_Sports_Fan_Sports_Fan_28_487.jpg"
     image = cv2.imread(image_dir)
-    roi, score, _ = pnet.detect(image, thresh=0.6)
-    roi, score, _ = rnet.detect(image, roi)
-    roi, score, landmarks = onet.detect(image, roi)
+    roi, score, _ = pnet.detect(image, thresh=0.7)
+    # roi, score, _ = rnet.detect(image, roi)
+    # roi, score, landmarks = onet.detect(image, roi)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    display_instances(image, roi, landmarks=landmarks)
+    display_instances(image, roi, landmarks=None)
     plt.show()

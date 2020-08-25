@@ -176,7 +176,7 @@ def processed_image(img, scale):
     new_width = int(width * scale)  # resized new width
     new_dim = (new_width, new_height)
     img_resized = cv2.resize(img, new_dim, interpolation=cv2.INTER_LINEAR)  # resized image
-    img_resized = (img_resized - 127.5) / 128
+    img_resized = img_resized / 255.
     return np.array(img_resized, np.float32)
 
 
@@ -297,6 +297,6 @@ def display_instances(image, boxes, class_names=None, class_ids=None,
                 color=color, size=12, backgroundcolor="none")
         if landmarks is not None:
             for landmark in landmarks[i]:
-                c = patches.Circle(landmark, radius=(h/25 + w/25)/2, edgecolor=(1,0,0), facecolor='none')
+                c = patches.Circle(landmark, radius=(h / 25 + w / 25) / 2, edgecolor=(1, 0, 0), facecolor='none')
                 ax.add_patch(c)
     ax.imshow(masked_image.astype(np.uint8), aspect='equal')
