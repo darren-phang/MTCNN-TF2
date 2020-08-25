@@ -6,7 +6,7 @@ from tqdm import tqdm
 from utils import compute_iou
 import json
 import random
-from utils import processed_image
+from utils import processed_image, convert_to_square
 
 TRAIN_IMAGE_ROOT = "WIDER_train/images"
 VAL_IMAGE_ROOT = "WIDER_val/images"
@@ -154,6 +154,84 @@ class WiderFace:
                     n_par += 1
         return annotation, n_ind, n_pos, n_par
 
+    def generator_hard_example(self, image_info, output_size, n_ind, n_pos, n_par):
+        annotation = []
+        image = cv2.imread(image_info['image_path'])
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # the preprocessing can be changed by yourself
+        pre_bbox, pre_scores, _ = self.detect_model.detect(image, thresh=0.6)
+        if pre_bbox is None:
+            return annotation, n_ind, n_pos, n_par
+        # pre_bbox = np.concatenate([pre_bbox, pre_scores], axis=-1)
+        gts = np.array(image_info["bbox"], dtype=np.float32).reshape(-1, 4)
+        gts_areas = gts[..., [2, 3]] - gts[..., [0, 1]]
+        gts_areas = gts_areas[..., 0] * gts_areas[..., 1]
+        # change to square
+        dets = convert_to_square(pre_bbox)
+        dets[:, 0:4] = np.round(dets[:, 0:4])
+        neg_num = 0
+        for box in dets:
+            x_left, y_top, x_right, y_bottom = box.astype(int)
+            width = x_right - x_left + 1
+            height = y_bottom - y_top + 1
+            box = np.array([x_left, y_top, x_right, y_bottom])
+
+            # ignore box beyond image border
+            if width < 20 or x_left < 0 or y_top < 0 or x_right > image.shape[1] - 1 or y_bottom > image.shape[0] - 1:
+                continue
+
+            # compute intersection over union(IoU) between current box and all gt boxes
+            iou = compute_iou(box, gts, width * height, gts_areas)
+
+            crop_img = image[y_top:y_bottom + 1, x_left:x_right + 1, :]
+            resize_img = cv2.resize(crop_img, (output_size, output_size),
+                                    interpolation=cv2.INTER_LINEAR)
+
+            # save negative images and write new_tools
+            # Iou with all gts must below 0.3
+            if np.max(iou) < 0.3 and neg_num < 60:
+                # save the examples
+                image_name = "negative/%s.jpg" % n_ind
+                annotation.append({
+                    'image_name': image_name,
+                    'image': resize_img,
+                    'label': 0,
+                    'offset': [0, 0, 0, 0]
+                })
+                neg_num += 1
+                n_ind += 1
+            else:
+                # find gt_box with the highest iou
+                idx = np.argmax(iou)
+                assigned_gt = gts[idx]
+                x1, y1, x2, y2 = assigned_gt
+
+                # compute bbox reg new_tools
+                offset_x1 = (x1 - x_left) / float(width)
+                offset_y1 = (y1 - y_top) / float(height)
+                offset_x2 = (x2 - x_right) / float(width)
+                offset_y2 = (y2 - y_bottom) / float(height)
+                # save positive and part-face images and write labels
+                if np.max(iou) >= 0.65:
+                    image_name = "positive/%s.jpg" % n_pos
+                    annotation.append({
+                        'image_name': image_name,
+                        'image': resize_img,
+                        'label': 1,
+                        'offset': [offset_x1, offset_y1, offset_x2, offset_y2]
+                    })
+                    n_pos += 1
+                elif np.max(iou) >= 0.4:
+                    image_name = "part/%s.jpg" % n_par
+                    annotation.append({
+                        'image_name': image_name,
+                        'image': resize_img,
+                        'label': -1,
+                        'offset': [offset_x1, offset_y1, offset_x2, offset_y2]
+                    })
+                    n_par += 1
+        return annotation, n_ind, n_pos, n_par
+
     def pnet_generator_image(self, output_dir, output_size=12):
         annotation = []
         root_dir = os.path.join(output_dir, "PNet")
@@ -176,8 +254,13 @@ class WiderFace:
         with open(os.path.join(root_dir, "annotation.json"), "w") as file:
             json.dump(annotation, file, indent=1)
 
-    def pnet_generator_tfrecord(self, output_dir, output_size=12):
-        root_dir = os.path.join(output_dir, "PNet_TFRCORD")
+    def generator_tfrecord(self, output_dir, stage_num, output_size=12, detect_model=None):
+        root_name = "%sNet_TFRCORD" % (["P", "R", "O"][stage_num])
+        self.detect_model = detect_model
+        if stage_num > 1 and self.detect_model is None:
+            raise ValueError("the detect model is None")
+        generator_fun = self.generator_one_ann if stage_num == 0 else self.generator_hard_example
+        root_dir = os.path.join(output_dir, root_name)
         os.makedirs(root_dir, exist_ok=True)
         self.writer = tf.io.TFRecordWriter(os.path.join(root_dir, "data.record"))
         n_ind = 0
@@ -185,7 +268,7 @@ class WiderFace:
         n_par = 0
         information = tqdm(range(self.image_num), desc='generating data: ')
         for image_info in self.image_info:
-            ann, n_ind, n_pos, n_par = self.generator_one_ann(image_info, output_size, n_ind, n_pos, n_par)
+            ann, n_ind, n_pos, n_par = generator_fun(image_info, output_size, n_ind, n_pos, n_par)
             for _ann in ann:
                 self.add_sample(_ann["image"], _ann["image_name"], _ann["label"], _ann["offset"])
             information.set_description("positive:%d, part:%d, negative:%d" % (n_pos, n_par, n_ind))
@@ -295,11 +378,15 @@ class MTCNNGenerator:
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import utils
-
+    from models.mtcnn_models import PNet, RNet
     # generate the dataset
-    # wider_face_dataset = '/media/cdut9c403/新加卷/darren/wider_face'
-    # dataset = WiderFace(wider_face_dataset, "train")
-    # dataset.pnet_generator_tfrecord(wider_face_dataset, 12)
+    wider_face_dataset = '/media/cdut9c403/新加卷/darren/wider_face'
+    dataset = WiderFace(wider_face_dataset, "train")
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    pnet = PNet()
+    ckpt = tf.train.Checkpoint(pnet=pnet)
+    ckpt.restore("/media/cdut9c403/新加卷/darren/logs/MTCNN/Pnet/ckpt-18")
+    dataset.generator_tfrecord(wider_face_dataset, stage_num=1, output_size=24, detect_model=pnet)
 
     # for image_info in dataset.image_info:
     #     image = cv2.imread(image_info['image_path'])
@@ -311,7 +398,7 @@ if __name__ == '__main__':
 
     # read the tfrecord
     dataset_path = '/media/cdut9c403/新加卷/darren/wider_face'
-    generator = MTCNNGenerator(dataset_path, "PNet_TFRCORD")
+    generator = MTCNNGenerator(dataset_path, "RNet_TFRCORD")
     for image, offset, label in generator.get_generator(1):
         image = image.numpy()[0] * 255
         if label[0] == 1:

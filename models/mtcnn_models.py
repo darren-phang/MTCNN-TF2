@@ -45,7 +45,7 @@ class PNet(tf.keras.Model):
         while min(current_height, current_width) > net_size:
             start_time = time.time()
             cls_cls_map, reg, _ = self.call(tf.expand_dims(im_resized, axis=0), training=False)
-            print(time.time() - start_time)
+            # print(time.time() - start_time)
             boxes = generate_bbox(cls_cls_map.numpy()[0, :, :, 1], reg.numpy()[0],
                                   2, net_size, current_scale, thresh)
 
@@ -56,7 +56,7 @@ class PNet(tf.keras.Model):
             if boxes.size == 0:
                 continue
             # get the index from non-maximum s
-            keep = py_nms(boxes[:, :4], boxes[:, 4], None, 0.5)
+            keep = py_nms(boxes[:, :4], boxes[:, 4], 100, 0.5)
             boxes = boxes[keep]
             all_boxes.append(boxes)
 
@@ -254,11 +254,12 @@ if __name__ == '__main__':
     # ckpt.restore("../data/pnet/ckpt-18")
     # ckpt.restore("../data/rnet/ckpt-14")
     # ckpt.restore("../data/onet/ckpt-16")
-    image_dir = "/media/cdut9c403/新加卷/darren/wider_face/WIDER_val/images/28--Sports_Fan/28_Sports_Fan_Sports_Fan_28_487.jpg"
+    image_dir = "/media/cdut9c403/新加卷/darren/wider_face/WIDER_train/images/0--Parade/0_Parade_marchingband_1_849.jpg"
     image = cv2.imread(image_dir)
-    roi, score, _ = pnet.detect(image, thresh=0.7)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    roi, score, _ = pnet.detect(image, thresh=0.9)
     # roi, score, _ = rnet.detect(image, roi)
     # roi, score, landmarks = onet.detect(image, roi)
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
     display_instances(image, roi, landmarks=None)
     plt.show()

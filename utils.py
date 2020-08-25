@@ -177,6 +177,7 @@ def processed_image(img, scale):
     new_dim = (new_width, new_height)
     img_resized = cv2.resize(img, new_dim, interpolation=cv2.INTER_LINEAR)  # resized image
     img_resized = img_resized / 255.
+    # img_resized = (img_resized - 127.5) / 128
     return np.array(img_resized, np.float32)
 
 
