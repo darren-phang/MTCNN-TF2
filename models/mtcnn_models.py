@@ -21,6 +21,7 @@ class PNet(tf.keras.Model):
         self.box = layers.Conv2D(4, 1, 1, activation=None)
         self.landmark = layers.Conv2D(10, 1, 1, activation=None)
 
+    @tf.function(experimental_relax_shapes=True)
     def call(self, inputs, training=None, mask=None):
         x = self.conv1(inputs)
         x = self.pool1(x)
@@ -44,7 +45,7 @@ class PNet(tf.keras.Model):
         all_boxes = list()
         while min(current_height, current_width) > net_size:
             start_time = time.time()
-            cls_cls_map, reg, _ = self.call(tf.expand_dims(im_resized, axis=0), training=False)
+            cls_cls_map, reg, _ = self.call(im_resized[np.newaxis, ...], training=False)
             # print(time.time() - start_time)
             boxes = generate_bbox(cls_cls_map.numpy()[0, :, :, 1], reg.numpy()[0],
                                   2, net_size, current_scale, thresh)
@@ -56,7 +57,7 @@ class PNet(tf.keras.Model):
             if boxes.size == 0:
                 continue
             # get the index from non-maximum s
-            keep = py_nms(boxes[:, :4], boxes[:, 4], 100, 0.5)
+            keep = py_nms(boxes[:, :4], boxes[:, 4], None, 0.5)
             boxes = boxes[keep]
             all_boxes.append(boxes)
 
@@ -123,7 +124,7 @@ class RNet(tf.keras.Model):
         return cls_pred, box_pred, landmark_pred
 
     def detect(self, img, bbox_pnet, net_size=24, batch_size=256,
-               score_thresh=0.6, iou_threshold=0.6, max_detect=100):
+               thresh=0.6, iou_threshold=0.6, max_detect=100):
         h, w, c = img.shape
         dets = convert_to_square(bbox_pnet)
         dets = np.round(dets)
@@ -146,7 +147,7 @@ class RNet(tf.keras.Model):
             return None, None, None
         cls_scores = np.concatenate(cls_scores, axis=0)
         reg = np.concatenate(reg, axis=0)
-        keep_inds = np.where(cls_scores > score_thresh)[0]
+        keep_inds = np.where(cls_scores > thresh)[0]
 
         if len(keep_inds) > 0:
             boxes = dets[keep_inds]
@@ -244,22 +245,28 @@ class ONet(tf.keras.Model):
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import os
+
     os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    physical_devices = tf.config.experimental.list_physical_devices('GPU')
+    if len(physical_devices) > 0:
+        for i in range(len(physical_devices)):
+            tf.config.experimental.set_memory_growth(physical_devices[i], True)
+            tf.config.set_soft_device_placement(True)
 
     pnet = PNet()
     rnet = RNet()
     onet = ONet()
     ckpt = tf.train.Checkpoint(pnet=pnet, rnet=rnet, onet=onet)
-    ckpt.restore("/media/cdut9c403/新加卷/darren/logs/MTCNN/Pnet/ckpt-18")
-    # ckpt.restore("../data/pnet/ckpt-18")
-    # ckpt.restore("../data/rnet/ckpt-14")
-    # ckpt.restore("../data/onet/ckpt-16")
-    image_dir = "/media/cdut9c403/新加卷/darren/wider_face/WIDER_train/images/0--Parade/0_Parade_marchingband_1_849.jpg"
+    ckpt.restore("../data_origin/pnet/ckpt-18")
+    ckpt.restore("../data_origin/rnet/ckpt-14")
+    ckpt.restore("../data_origin/onet/ckpt-16")
+    image_dir = ""
     image = cv2.imread(image_dir)
+    # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    roi, score, _ = pnet.detect(image, thresh=0.6)
+    roi, score, _ = rnet.detect(image, roi, thresh=0.4)
+    roi, score, landmarks = onet.detect(image, roi)
+    print(roi.shape)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    roi, score, _ = pnet.detect(image, thresh=0.9)
-    # roi, score, _ = rnet.detect(image, roi)
-    # roi, score, landmarks = onet.detect(image, roi)
-
     display_instances(image, roi, landmarks=None)
     plt.show()

@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib import patches, lines
 
 STANDARD_COLORS = [
-    'RoyalBlue', 'SaddleBrown', 'Red', 'RosyBrown', 'Green', 'SandyBrown',
+    'Red', 'RoyalBlue', 'SaddleBrown', 'RosyBrown', 'Green', 'SandyBrown',
     'SeaGreen', 'SeaShell', 'Sienna', 'Red', 'SkyBlue', 'SlateBlue',
     'SlateGray', 'SlateGrey', 'Snow', 'SpringGreen', 'SteelBlue', 'GreenYellow',
     'Teal', 'Thistle', 'YellowGreen', 'ForestGreen', 'Fuchsia', 'Gainsboro', 'GhostWhite', 'Gold', 'GoldenRod',
@@ -176,9 +176,9 @@ def processed_image(img, scale):
     new_width = int(width * scale)  # resized new width
     new_dim = (new_width, new_height)
     img_resized = cv2.resize(img, new_dim, interpolation=cv2.INTER_LINEAR)  # resized image
-    img_resized = img_resized / 255.
-    # img_resized = (img_resized - 127.5) / 128
-    return np.array(img_resized, np.float32)
+    # img_resized = img_resized / 255.
+    img_resized = (img_resized - 127.5) / 128
+    return img_resized
 
 
 def generate_bbox(cls_map, reg, stride, cellsize, scale, threshold):
@@ -258,13 +258,12 @@ def clip_bbox(bbox, image_size):
 def display_instances(image, boxes, class_names=None, class_ids=None,
                       landmarks=None, scores=None, figsize=(12, 12), ax=None,
                       score_threshold=0.5, captions=None):
+    # Number of instances
+    if boxes is None or not boxes.shape[0]:
+        print("\n*** No instances to display *** \n")
+        return
     if class_ids is None:
         class_ids = np.zeros([boxes.shape[0]], dtype=int)
-    # Number of instances
-    N = boxes.shape[0]
-    if not N:
-        print("\n*** No instances to display *** \n")
-
     if not ax:
         _, ax = plt.subplots(1, figsize=figsize)
 
@@ -272,7 +271,7 @@ def display_instances(image, boxes, class_names=None, class_ids=None,
     colors = STANDARD_COLORS
     ax.axis('off')
     masked_image = image.astype(np.uint32).copy()
-    for i in range(N):
+    for i in range(boxes.shape[0]):
         score = scores[i] if scores is not None else 1.
         if score_threshold > score:
             continue

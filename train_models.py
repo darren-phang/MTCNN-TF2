@@ -52,17 +52,18 @@ class Trainer:
         self.steps_pre_epoch = step_pre_epoch
 
         lr_schedule = WarmupCosineDecay(warmup_start=learning_rate * 0.001,
-                                        warmup_steps=5 * self.steps_pre_epoch,
+                                        warmup_steps=2 * self.steps_pre_epoch,
                                         initial_learning_rate=learning_rate,
-                                        decay_steps=(epoch - 5) * self.steps_pre_epoch,
+                                        decay_steps=(epoch - 2) * self.steps_pre_epoch,
                                         alpha=0.0)
         self.optimizer = tf.optimizers.SGD(learning_rate=lr_schedule, momentum=0.9)
         model_save_dict = {model_name: self.model}
         self.ckpt = tf.train.Checkpoint(**model_save_dict)
+        # self.ckpt.restore("/media/cdut9c403/新加卷/darren/logs/MTCNN/Pnet/ckpt-14")
         self.ckpt_manager = tf.train.CheckpointManager(self.ckpt, logdir, max_to_keep=3)
         self.summary_writer = tf.summary.create_file_writer(os.path.join(logdir, "summary"), name="train")
 
-    # @tf.function
+    @tf.function
     def train_step(self, _inp):
         with tf.GradientTape() as tape:
             imgs, bboxes, labels = _inp
@@ -71,7 +72,7 @@ class Trainer:
             bbox_loss = models.bbox_ohem(bbox_pred, bboxes, labels)
             accuracy = cal_accuracy(cls_prob, labels)
             regular_loss = tf.add_n(self.model.losses)
-            loss = cls_loss + bbox_loss * 0.5 + regular_loss
+            loss = cls_loss + bbox_loss + regular_loss
         grads = tape.gradient(loss, self.model.trainable_variables)
         self.optimizer.apply_gradients(list(zip(grads, self.model.trainable_variables)))
         return cls_loss, bbox_loss, accuracy
@@ -102,11 +103,13 @@ class Trainer:
             tf.summary.scalar("loss/bbox_loss", bbox_loss, step=self.global_step)
             tf.summary.scalar("recode/accuracy", accuracy, step=self.global_step)
 
+
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 dataset_path = '/media/cdut9c403/新加卷/darren/wider_face'
-generator = MTCNNGenerator(dataset_path, "PNet_TFRCORD")
+generator = MTCNNGenerator(dataset_path, "ONet_TFRCORD", 'train')
 
-pnet = models.PNet()
-trainer = Trainer(pnet, generator, "pnet", "/media/cdut9c403/新加卷/darren/logs/MTCNN/Pnet",
-                  384, 18, 0.001)
+model = models.ONet()
+trainer = Trainer(model, generator, "onet", "/media/cdut9c403/新加卷/darren/logs/MTCNN/Onet",
+                  500, 18, 0.005, step_pre_epoch=2000)
 trainer.train()
+import tensorflow.keras.applications.efficientnet
