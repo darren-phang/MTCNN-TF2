@@ -7,16 +7,54 @@ from utils import compute_iou
 import json
 import random
 from utils import processed_image, convert_to_square
-from io import BytesIO
-TRAIN_IMAGE_ROOT = "WIDER_train/images"
-VAL_IMAGE_ROOT = "WIDER_val/images"
-TRAIN_ANNOTATION = "wider_face_split/wider_face_train_bbx_gt.txt"
-VAL_ANNOTATION = "wider_face_split/wider_face_val_bbx_gt.txt"
-INFO = ['x1', 'y1', 'w', 'h', 'blur', 'expression', 'illumination', 'invalid', 'occlusion', 'pose']
+
+
+@tf.function
+def random_flip_images(image, offset, label):
+    # negative image have no offset annotation
+    if label != 1: return image, offset, label
+    if tf.random.uniform([], 1) > 0.5:
+        image = tf.image.flip_left_right(image)
+        # the y offset is not changed,
+        offset = tf.unstack(offset, axis=-1)
+        offset = tf.stack([offset[2], offset[1], offset[0], offset[3]], axis=-1)
+        offset = offset * tf.constant([-1, 1, -1, 1], dtype=tf.float32)
+    return image, offset, label
+
+
+@tf.function
+def random_flip_landmark(image, landmark):
+    if tf.random.uniform([], 1) > 0.5:
+        image = tf.image.flip_left_right(image)
+        landmark = tf.reshape(landmark, [-1, 2])
+        landmark = landmark * tf.cast([[-1, 1]], tf.float32)
+        landmark = landmark + tf.cast([[1, 0]], tf.float32)
+        landmark = tf.unstack(landmark, axis=0)
+        landmark = tf.stack([landmark[1], landmark[0], landmark[2], landmark[4], landmark[3]], axis=0)
+        # landmark[[0, 1]] = landmark[[1, 0]]  # left eye<->right eye
+        # landmark[[3, 4]] = landmark[[4, 3]]  # left mouth<->right mouth
+        landmark = tf.reshape(landmark, [-1])
+
+    return image, landmark
+
+
+def image_color_distort(image):
+    image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
+    image = tf.image.random_brightness(image, max_delta=0.2)
+    image = tf.image.random_hue(image, max_delta=0.2)
+    image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
+    return image
 
 
 class WiderFace:
     def __init__(self, dataset_root, subset):
+        # WIDER FACE
+        TRAIN_IMAGE_ROOT = "WIDER_train/images"
+        VAL_IMAGE_ROOT = "WIDER_val/images"
+        TRAIN_ANNOTATION = "wider_face_split/wider_face_train_bbx_gt.txt"
+        VAL_ANNOTATION = "wider_face_split/wider_face_val_bbx_gt.txt"
+        INFO = ['x1', 'y1', 'w', 'h', 'blur', 'expression', 'illumination', 'invalid', 'occlusion', 'pose']
+
         if subset == 'train':
             self.annotation = os.path.join(dataset_root, TRAIN_ANNOTATION)
             self.image_root = os.path.join(dataset_root, TRAIN_IMAGE_ROOT)
@@ -55,7 +93,7 @@ class WiderFace:
                     _image_info["num"] = len(_image_info['bbox'])
                     self.image_info.append(_image_info)
 
-    def generator_sample_example(self, image_info, output_size, n_ind, n_pos, n_par):
+    def generate_sample_example(self, image_info, output_size, n_ind, n_pos, n_par):
         annotation = []
         image = cv2.imread(image_info['image_path'])
         # x, y, x, y
@@ -158,7 +196,7 @@ class WiderFace:
                     n_par += 1
         return annotation, n_ind, n_pos, n_par
 
-    def generator_hard_example(self, image_info, output_size, n_ind, n_pos, n_par):
+    def generate_hard_example(self, image_info, output_size, n_ind, n_pos, n_par):
         annotation = []
         image = cv2.imread(image_info['image_path'])
         # the preprocessing can be changed by yourself
@@ -237,7 +275,7 @@ class WiderFace:
                     n_par += 1
         return annotation, n_ind, n_pos, n_par
 
-    def pnet_generator_image(self, output_dir, output_size=12):
+    def pnet_generate_image(self, output_dir, output_size=12):
         annotation = []
         root_dir = os.path.join(output_dir, "PNet")
         os.makedirs(root_dir, exist_ok=True)
@@ -249,7 +287,7 @@ class WiderFace:
         n_par = 0
         information = tqdm(range(self.image_num), desc='generating data_origin: ')
         for image_info in self.image_info:
-            ann, n_ind, n_pos, n_par = self.generator_sample_example(image_info, output_size, n_ind, n_pos, n_par)
+            ann, n_ind, n_pos, n_par = self.generate_sample_example(image_info, output_size, n_ind, n_pos, n_par)
             for _ann in ann:
                 img = _ann.pop('image')
                 cv2.imwrite(os.path.join(root_dir, _ann["image_name"]), img)
@@ -259,12 +297,12 @@ class WiderFace:
         with open(os.path.join(root_dir, "annotation.json"), "w") as file:
             json.dump(annotation, file, indent=1)
 
-    def generator_tfrecord(self, output_dir, stage_num, output_size=12, detect_model=None, record_name="data_origin"):
+    def generate_tfrecord(self, output_dir, stage_num, output_size=12, detect_model=None, record_name="data_origin"):
         root_name = "%sNet_TFRCORD" % (["P", "R", "O"][stage_num])
         self.detect_model = detect_model
         if stage_num > 1 and self.detect_model is None:
             raise ValueError("the detect model is None")
-        generator_fun = self.generator_sample_example if stage_num == 0 else self.generator_hard_example
+        generator_fun = self.generate_sample_example if stage_num == 0 else self.generate_hard_example
         root_dir = os.path.join(output_dir, root_name)
         tfrecord_name = os.path.join(root_dir, "%s.record" % record_name)
         os.makedirs(root_dir, exist_ok=True)
@@ -281,7 +319,7 @@ class WiderFace:
             information.set_description("positive:%d, part:%d, negative:%d" % (n_pos, n_par, n_ind))
             information.update(1)
         information.close()
-        self.balance_dataset(tfrecord_name,  annotation, basenum=n_pos)
+        self.balance_dataset(tfrecord_name, annotation, basenum=n_pos)
 
     def add_sample(self, image, image_name, label, offset):
         exam = tf.train.Example(
@@ -292,7 +330,8 @@ class WiderFace:
                     'offset': tf.train.Feature(float_list=tf.train.FloatList(value=offset)),
                     'shape': tf.train.Feature(
                         int64_list=tf.train.Int64List(value=[image.shape[0], image.shape[1], image.shape[2]])),
-                    'data_origin': tf.train.Feature(bytes_list=tf.train.BytesList(value=[tf.io.encode_png(image).numpy()]))
+                    'data_origin': tf.train.Feature(
+                        bytes_list=tf.train.BytesList(value=[tf.io.encode_png(image).numpy()]))
                 }
             )
         )
@@ -309,14 +348,14 @@ class WiderFace:
         data = tf.io.parse_single_example(exam_proto, feature_description)
         return data['name'], data['label'], data["offset"], data["shape"], data["data_origin"]
 
-    def balance_dataset(self, tfrecord_name, annotation, basenum=100000, ratio_n_p_pr=[1, 1, 1]):
+    def balance_dataset(self, tfrecord_name, annotation, basenum=100000, ratio_n_p_pr=(1, 1, 1)):
         each_label_num = {'neg': ratio_n_p_pr[0] * basenum,
                           'pos': ratio_n_p_pr[1] * basenum,
                           'par': ratio_n_p_pr[2] * basenum}
         all_num = 0
         for label in annotation:
             choose_num = min(len(annotation[label]), each_label_num[label])
-            annotation[label] = np.random.choice(annotation[label], size=choose_num, replace=True)
+            annotation[label] = np.random.choice(annotation[label], size=choose_num, replace=False)
             all_num += len(annotation[label])
         print(len(annotation['neg']), len(annotation['pos']), len(annotation['par']))
         self.writer = tf.io.TFRecordWriter(tfrecord_name)
@@ -329,10 +368,88 @@ class WiderFace:
         self.writer.close()
 
 
+class LFW:
+    def __init__(self, dataset_root):
+        self.TRAIN_IMAGE_ANNOTATION = "train/trainImageList.txt"
+        self.TEST_IMAGE_ANNOTATION = "train/testImageList.txt"
+        self.IMAGE_ROOT = "train"
+        self.dataset_root = dataset_root
+        self.image_info = []
+        self.read_annotation()
+        self.read_annotation(read_test=True)
+        self.image_num = len(self.image_info)
+
+    def read_annotation(self, read_test=False):
+        annotation = self.TEST_IMAGE_ANNOTATION if read_test else self.TRAIN_IMAGE_ANNOTATION
+        annotation = os.path.join(self.dataset_root, annotation)
+        with open(annotation, "r") as file:
+            for line in file.readlines():
+                info = line.strip().split(" ")
+                _bbox = np.array([int(_) for _ in info[1: 5]])[[0, 2, 1, 3]]
+                self.image_info.append({
+                    "image_path": os.path.join(self.dataset_root, self.IMAGE_ROOT, info[0].replace("\\", "/")),
+                    "bbox": _bbox.tolist(),
+                    "landmark": [float(_) for _ in info[5:]],
+                })
+
+    def generate_tfrecord(self, output_dir, image_size, record_name="landmark"):
+        os.makedirs(output_dir, exist_ok=True)
+        tfrecord_name = os.path.join(output_dir, "%s.record" % record_name)
+        self.writer = tf.io.TFRecordWriter(tfrecord_name)
+        information = tqdm(range(self.image_num), desc='generating data_origin: ')
+        for idx, image_info in enumerate(self.image_info):
+            information.set_description("processing image: %d" % idx)
+            # crop and resize the image
+            image = cv2.imread(image_info["image_path"])
+            _bbox = image_info["bbox"]
+            image = image[_bbox[1]: _bbox[3], _bbox[0]: _bbox[2], :]
+            image = cv2.resize(image, (image_size, image_size))
+            # compute the landmark offset
+            _landmark = np.array(image_info["landmark"]).reshape([-1, 2])
+            _landmark = _landmark - np.array([_bbox[0], _bbox[1]])
+            _landmark = _landmark / image_size
+            _landmark = _landmark.flatten()
+            exam = tf.train.Example(
+                features=tf.train.Features(
+                    feature={
+                        'name': tf.train.Feature(
+                            bytes_list=tf.train.BytesList(value=[image_info["image_path"].encode()])),
+                        'landmark': tf.train.Feature(float_list=tf.train.FloatList(value=_landmark.tolist())),
+                        'shape': tf.train.Feature(
+                            int64_list=tf.train.Int64List(value=[image.shape[0], image.shape[1], image.shape[2]])),
+                        'data_origin': tf.train.Feature(
+                            bytes_list=tf.train.BytesList(value=[tf.io.encode_png(image).numpy()]))
+                    }
+                )
+            )
+            self.writer.write(exam.SerializeToString())
+            information.update(1)
+        information.close()
+
+
 class MTCNNGenerator:
-    def __init__(self, dataset_root, sub_model, record_name='data_origin'):
-        self.model_dataset_path = os.path.join(dataset_root, sub_model)
-        self.annotation = os.path.join(self.model_dataset_path, "annotation.json")
+    def __init__(self, dataset_root, record_name='data_origin'):
+        self.tfrecord = os.path.join(dataset_root, "%s.record" % record_name)
+        self.set_feature_description()
+
+    def set_feature_description(self):
+        raise NotImplementedError
+
+    def _parse_function(self, exam_proto):
+        raise NotImplementedError
+
+    def get_generator(self, batch_size=32):
+        dataset = tf.data.TFRecordDataset(self.tfrecord, num_parallel_reads=8) \
+            .map(self._parse_function) \
+            .shuffle(batch_size * 5) \
+            .batch(batch_size) \
+            .repeat(-1) \
+            .prefetch(tf.data.experimental.AUTOTUNE)
+        return dataset
+
+
+class BboxGenerator(MTCNNGenerator):
+    def set_feature_description(self):
         self.feature_description = {
             'name': tf.io.FixedLenFeature([1], tf.string),
             'label': tf.io.FixedLenFeature([1], tf.int64),
@@ -340,46 +457,6 @@ class MTCNNGenerator:
             'shape': tf.io.FixedLenFeature([3], tf.int64),
             'data_origin': tf.io.FixedLenFeature([1], tf.string)
         }
-        if os.path.exists(self.annotation):
-            self.image_info = json.load(open(self.annotation, "r"))
-            random.shuffle(self.image_info)
-            self.image_number = len(self.image_info)
-        else:
-            record_list = []
-            record_list.append(os.path.join(self.model_dataset_path, '%s.record' % record_name))
-            if len(record_list) == 0:
-                raise ValueError("no data_origin to onload")
-            self.tfrecord = record_list[0]
-
-    @staticmethod
-    @tf.function
-    def random_flip_images(image, offset, label):
-        # negative image have no offset annotation
-        if label != 1: return image, offset, label
-        if tf.random.uniform([], 1) > 0.5:
-            image = tf.image.flip_left_right(image)
-            # the y offset is not changed,
-            offset = tf.unstack(offset, axis=-1)
-            offset = tf.stack([offset[2], offset[1], offset[0], offset[3]], axis=-1)
-            offset = offset * tf.constant([-1, 1, -1, 1], dtype=tf.float32)
-        return image, offset, label
-
-    @staticmethod
-    def image_color_distort(image, bbox, label):
-        image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
-        image = tf.image.random_brightness(image, max_delta=0.2)
-        image = tf.image.random_hue(image, max_delta=0.2)
-        image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
-        return image, bbox, label
-
-    def generator_image(self):
-        for image_info in self.image_info:
-            image = cv2.imread(os.path.join(self.model_dataset_path, image_info["image_name"]))
-            image = image / 255
-            offset = np.array(image_info["offset"])
-            label = image_info["label"]
-            image, offset, label = self.random_flip_images(image, offset, label)
-            yield image, offset, label
 
     def _parse_function(self, exam_proto):
         data = tf.io.parse_single_example(exam_proto, self.feature_description)
@@ -388,66 +465,58 @@ class MTCNNGenerator:
         shape = data["shape"]
         image = tf.io.decode_png(data['data_origin'][0])
         image = tf.reshape(image, shape)
-        image, offset, label = self.image_color_distort(image, offset, label)
-        image, offset, label = self.random_flip_images(image, offset, label)
+        image = image_color_distort(image)
+        image, offset, label = random_flip_images(image, offset, label)
         image = tf.cast(image, tf.float32)
         image = (image - 127.5) / 128
         return image, offset, label
 
-    def get_generator(self, batch_size=32):
-        if self.tfrecord is not None:
-            dataset = tf.data.TFRecordDataset(self.tfrecord, num_parallel_reads=8) \
-                .map(self._parse_function) \
-                .shuffle(batch_size * 5) \
-                .batch(batch_size) \
-                .repeat(-1) \
-                .prefetch(tf.data.experimental.AUTOTUNE)
-        else:
-            dataset = tf.data.Dataset.from_generator(self.generator_image, (tf.float32, tf.float32, tf.float32)) \
-                .map(self.image_color_distort) \
-                .shuffle(batch_size * 5) \
-                .batch(batch_size) \
-                .repeat(-1) \
-                .prefetch(tf.data.experimental.AUTOTUNE)
-        return dataset
+
+class LandmarkGenerator(MTCNNGenerator):
+    def set_feature_description(self):
+        self.feature_description = {
+            'name': tf.io.FixedLenFeature([1], tf.string),
+            'landmark': tf.io.FixedLenFeature([10], tf.float32),
+            'shape': tf.io.FixedLenFeature([3], tf.int64),
+            'data_origin': tf.io.FixedLenFeature([1], tf.string)
+        }
+
+    def _parse_function(self, exam_proto):
+        data = tf.io.parse_single_example(exam_proto, self.feature_description)
+        landmark = data["landmark"]
+        shape = data["shape"]
+        image = tf.io.decode_png(data['data_origin'][0])
+        image = tf.reshape(image, shape)
+        image = image_color_distort(image)
+        image, landmark = random_flip_landmark(image, landmark)
+        image = tf.cast(image, tf.float32)
+        image = (image - 127.5) / 128
+        return image, landmark
 
 
 if __name__ == '__main__':
-    import matplotlib.pyplot as plt
     import utils
     from models.mtcnn_models import PNet, RNet
 
-    # generate the dataset
-    wider_face_dataset = '/media/cdut9c403/新加卷/darren/wider_face'
+    wider_face_dataset = ''
     dataset = WiderFace(wider_face_dataset, "train")
-    # dataset.generator_tfrecord(wider_face_dataset, stage_num=0, output_size=12,
-    #                            detect_model=None, record_name='train')
-
+    # generate the dataset
     os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
     pnet = PNet()
     rnet = RNet()
     ckpt = tf.train.Checkpoint(pnet=pnet, rnet=rnet)
+    # 在生成Rnet训练集时需要加载Pnet的参数
     ckpt.restore("/media/cdut9c403/新加卷/darren/logs/MTCNN/Pnet/ckpt-18")
+    # 在生成Onet训练集时需要加载Pnet和Rnet的参数
     ckpt.restore("/media/cdut9c403/新加卷/darren/logs/MTCNN/Rnet/ckpt-18")
 
-    dataset.generator_tfrecord(wider_face_dataset, stage_num=2, output_size=48, detect_model=[pnet, rnet], record_name='train')
+    dataset.generate_tfrecord(wider_face_dataset,
+                              stage_num=0,  # pnet=0, rnet=1, onet=2
+                              output_size=12,  # pnet=12, rnet=24, onet=48
+                              detect_model=None,  # pnet=None, rnet=[pnet], onet=[pnet, rnet]
+                              record_name='train')
 
-    # for image_info in dataset.image_info:
-    #     image = cv2.imread(image_info['image_path'])
-    #     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    #     bboxes = np.array(image_info["bbox"]).astype(np.float32)
-    #
-    #     utils.display_instances(image, bboxes)
-    #     plt.show()
-
-    ########read the tfrecord
-    dataset_path = '/media/cdut9c403/新加卷/darren/wider_face'
-    generator = MTCNNGenerator(dataset_path, "ONet_TFRCORD", 'train')
-    num = {-1: 0, 0: 0, 1: 0}
-    for image, offset, label in generator.get_generator(1):
-        image = image.numpy()[0]
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        num[label[0].numpy()] += 1
-        if label[0].numpy() == 1:
-            plt.imshow(image.astype(np.uint8))
-            plt.show()
+    # 我只在Onet的训练中加入了landmark的信息，并且是在全部训练完成后，单独训练landmark头
+    lfw_face_dataset = '/Users/darrenpang/Documents/datasets/LFW'
+    lfw = LFW(lfw_face_dataset)
+    lfw.generate_tfrecord('/Users/darrenpang/Documents/datasets/LFW/train', 48)

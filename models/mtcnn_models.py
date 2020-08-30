@@ -246,6 +246,7 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import os
 
+    image_dir = ""
     os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
     physical_devices = tf.config.experimental.list_physical_devices('GPU')
     if len(physical_devices) > 0:
@@ -260,13 +261,11 @@ if __name__ == '__main__':
     ckpt.restore("../data_origin/pnet/ckpt-18")
     ckpt.restore("../data_origin/rnet/ckpt-14")
     ckpt.restore("../data_origin/onet/ckpt-16")
-    image_dir = ""
     image = cv2.imread(image_dir)
     # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     roi, score, _ = pnet.detect(image, thresh=0.6)
     roi, score, _ = rnet.detect(image, roi, thresh=0.4)
     roi, score, landmarks = onet.detect(image, roi)
-    print(roi.shape)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     display_instances(image, roi, landmarks=None)
     plt.show()
