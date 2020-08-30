@@ -30,7 +30,7 @@ class LandmarkTrain(Trainer):
             tf.summary.scalar("loss/landmark", train_info[0], step=self.global_step)
 
 
-dataset_path = '/Users/darrenpang/Documents/datasets/LFW/train'
+dataset_path = '/media/darren/新加卷/Datasets/LFW/train'
 log_path = '../ckpt/my/Onet-landmark'
 onet_ckpt = '../ckpt/my/Onet/ckpt-18'
 model_name = 'onet'
@@ -38,6 +38,6 @@ generator = LandmarkGenerator(dataset_path, 'landmark')
 model = models.ONet()
 
 trainer = LandmarkTrain(model, generator, model_name, log_path,
-                        500, 18, 0.005, step_pre_epoch=2000)
-trainer.ckpt.restore(onet_ckpt)
+                        500, 18, 0.005, step_pre_epoch=200)
+trainer.ckpt.restore(onet_ckpt).assert_existing_objects_matched()
 trainer.train()

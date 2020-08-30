@@ -216,21 +216,19 @@ class ONet(tf.keras.Model):
             reg.append(_reg)
             landmark.append(_landmark)
         if len(cls_scores) == 0:
-            print("b")
             return None, None, None
         cls_scores = np.concatenate(cls_scores, axis=0)
         reg = np.concatenate(reg, axis=0)
         landmark = np.concatenate(landmark, axis=0)
 
         keep_inds = np.where(cls_scores > thresh)[0]
-
+        print(keep_inds)
         if len(keep_inds) > 0:
             boxes = dets[keep_inds]
             scores = cls_scores[keep_inds]
             reg = reg[keep_inds]
             landmark = landmark[keep_inds]
         else:
-            print("a")
             return None, None, None
         boxes = calibrate_box(boxes, reg)
         keep = py_nms(boxes, scores, max_detect, iou_threshold, mode="Minimum")
@@ -246,7 +244,7 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import os
 
-    image_dir = ""
+    image_dir = "/media/darren/新加卷/Darren/照片/DSC_0001.JPG"
     os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
     physical_devices = tf.config.experimental.list_physical_devices('GPU')
     if len(physical_devices) > 0:
@@ -258,14 +256,15 @@ if __name__ == '__main__':
     rnet = RNet()
     onet = ONet()
     ckpt = tf.train.Checkpoint(pnet=pnet, rnet=rnet, onet=onet)
-    ckpt.restore("../data_origin/pnet/ckpt-18")
-    ckpt.restore("../data_origin/rnet/ckpt-14")
-    ckpt.restore("../data_origin/onet/ckpt-16")
+    ckpt.restore("../ckpt/my/Pnet/ckpt-18")
+    ckpt.restore("../ckpt/my/Rnet/ckpt-18")
+    ckpt.restore("../ckpt/my/Onet-landmark/ckpt-18")
     image = cv2.imread(image_dir)
     # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     roi, score, _ = pnet.detect(image, thresh=0.6)
     roi, score, _ = rnet.detect(image, roi, thresh=0.4)
     roi, score, landmarks = onet.detect(image, roi)
+    print(roi)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    display_instances(image, roi, landmarks=None)
+    display_instances(image, roi, landmarks=landmarks)
     plt.show()

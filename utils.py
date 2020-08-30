@@ -255,15 +255,13 @@ def clip_bbox(bbox, image_size):
     return bbox
 
 
-def display_instances(image, boxes, class_names=None, class_ids=None,
-                      landmarks=None, scores=None, figsize=(12, 12), ax=None,
-                      score_threshold=0.5, captions=None):
+def display_instances(image, boxes, landmarks=None, scores=None,
+                      figsize=(12, 12), ax=None, score_threshold=0.5, captions=None):
     # Number of instances
     if boxes is None or not boxes.shape[0]:
         print("\n*** No instances to display *** \n")
         return
-    if class_ids is None:
-        class_ids = np.zeros([boxes.shape[0]], dtype=int)
+    class_ids = np.zeros([boxes.shape[0]], dtype=int)
     if not ax:
         _, ax = plt.subplots(1, figsize=figsize)
 
@@ -287,14 +285,12 @@ def display_instances(image, boxes, class_names=None, class_ids=None,
                               alpha=0.7, linestyle="dashed",
                               edgecolor=color, facecolor='none')
         ax.add_patch(p)
-        if not captions:
-            class_id = class_ids[i]
-            label = class_names[class_id] if class_names is not None else ''
-            caption = "{} {:.3f}".format(label, score) if score < 1. else label
-        else:
-            caption = captions[i]
-        ax.text(x1, y1 - 10, caption,
-                color=color, size=12, backgroundcolor="none")
+        # if not captions:
+        #     caption = "{:.3f}".format(score)
+        # else:
+        #     caption = captions[i]
+        # ax.text(x1, y1 - 10, caption,
+        #         color=color, size=12, backgroundcolor="none")
         if landmarks is not None:
             for landmark in landmarks[i]:
                 c = patches.Circle(landmark, radius=(h / 25 + w / 25) / 2, edgecolor=(1, 0, 0), facecolor='none')

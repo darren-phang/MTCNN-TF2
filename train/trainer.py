@@ -59,7 +59,6 @@ class Trainer:
         self.optimizer = tf.optimizers.SGD(learning_rate=lr_schedule, momentum=0.9)
         model_save_dict = {model_name: self.model}
         self.ckpt = tf.train.Checkpoint(**model_save_dict)
-        # self.ckpt.restore("/media/cdut9c403/新加卷/darren/logs/MTCNN/Pnet/ckpt-14")
         self.ckpt_manager = tf.train.CheckpointManager(self.ckpt, logdir, max_to_keep=3)
         self.summary_writer = tf.summary.create_file_writer(os.path.join(logdir, "summary"), name="train")
         self.set_describe()

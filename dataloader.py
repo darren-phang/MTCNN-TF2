@@ -31,8 +31,7 @@ def random_flip_landmark(image, landmark):
         landmark = landmark + tf.cast([[1, 0]], tf.float32)
         landmark = tf.unstack(landmark, axis=0)
         landmark = tf.stack([landmark[1], landmark[0], landmark[2], landmark[4], landmark[3]], axis=0)
-        # landmark[[0, 1]] = landmark[[1, 0]]  # left eye<->right eye
-        # landmark[[3, 4]] = landmark[[4, 3]]  # left mouth<->right mouth
+        # left eye<->right eye, left mouth<->right mouth
         landmark = tf.reshape(landmark, [-1])
 
     return image, landmark
@@ -407,7 +406,7 @@ class LFW:
             # compute the landmark offset
             _landmark = np.array(image_info["landmark"]).reshape([-1, 2])
             _landmark = _landmark - np.array([_bbox[0], _bbox[1]])
-            _landmark = _landmark / image_size
+            _landmark = _landmark / np.array([_bbox[2] - _bbox[0], _bbox[3] - _bbox[1]])
             _landmark = _landmark.flatten()
             exam = tf.train.Example(
                 features=tf.train.Features(
@@ -487,7 +486,7 @@ class LandmarkGenerator(MTCNNGenerator):
         shape = data["shape"]
         image = tf.io.decode_png(data['data_origin'][0])
         image = tf.reshape(image, shape)
-        image = image_color_distort(image)
+        # image = image_color_distort(image)
         image, landmark = random_flip_landmark(image, landmark)
         image = tf.cast(image, tf.float32)
         image = (image - 127.5) / 128
@@ -498,25 +497,44 @@ if __name__ == '__main__':
     import utils
     from models.mtcnn_models import PNet, RNet
 
-    wider_face_dataset = ''
-    dataset = WiderFace(wider_face_dataset, "train")
-    # generate the dataset
-    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-    pnet = PNet()
-    rnet = RNet()
-    ckpt = tf.train.Checkpoint(pnet=pnet, rnet=rnet)
-    # 在生成Rnet训练集时需要加载Pnet的参数
-    ckpt.restore("/media/cdut9c403/新加卷/darren/logs/MTCNN/Pnet/ckpt-18")
-    # 在生成Onet训练集时需要加载Pnet和Rnet的参数
-    ckpt.restore("/media/cdut9c403/新加卷/darren/logs/MTCNN/Rnet/ckpt-18")
-
-    dataset.generate_tfrecord(wider_face_dataset,
-                              stage_num=0,  # pnet=0, rnet=1, onet=2
-                              output_size=12,  # pnet=12, rnet=24, onet=48
-                              detect_model=None,  # pnet=None, rnet=[pnet], onet=[pnet, rnet]
-                              record_name='train')
+    # wider_face_dataset = ''
+    # dataset = WiderFace(wider_face_dataset, "train")
+    # # generate the dataset
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    # Pnet = PNet()
+    # Rnet = RNet()
+    # ckpt = tf.train.Checkpoint(Pnet=Pnet, Rnet=Rnet)
+    # # 在生成Rnet训练集时需要加载Pnet的参数
+    # ckpt.restore("/media/cdut9c403/新加卷/darren/logs/MTCNN/Pnet/ckpt-18")
+    # # 在生成Onet训练集时需要加载Pnet和Rnet的参数
+    # ckpt.restore("/media/cdut9c403/新加卷/darren/logs/MTCNN/Rnet/ckpt-18")
+    #
+    # dataset.generate_tfrecord(wider_face_dataset,
+    #                           stage_num=0,  # Pnet=0, Rnet=1, Onet=2
+    #                           output_size=12,  # Pnet=12, Rnet=24, Onet=48
+    #                           detect_model=None,  # Pnet=None, Rnet=[Pnet], Onet=[Pnet, Rnet]
+    #                           record_name='train')
 
     # 我只在Onet的训练中加入了landmark的信息，并且是在全部训练完成后，单独训练landmark头
-    lfw_face_dataset = '/Users/darrenpang/Documents/datasets/LFW'
+    lfw_face_dataset = '/media/darren/新加卷/Datasets/LFW'
     lfw = LFW(lfw_face_dataset)
-    lfw.generate_tfrecord('/Users/darrenpang/Documents/datasets/LFW/train', 48)
+    lfw.generate_tfrecord('/media/darren/新加卷/Datasets/LFW/train', 48)
+
+    # from utils import display_instances
+    # import matplotlib.pyplot as plt
+    # dataset_path = '/media/darren/新加卷/Datasets/LFW/train'
+    # generator = LandmarkGenerator(dataset_path, 'landmark')
+    # for image, landmark in generator.get_generator(1):
+    #     image = image.numpy()[0] * 128
+    #     image = image + 127.5
+    #     image = image.astype(np.uint8)
+    #     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    #     landmark = landmark.numpy()
+    #     boxes = np.array([[0, 0, 48, 48]])
+    #     w = boxes[:, 2] - boxes[:, 0] + 1
+    #     h = boxes[:, 3] - boxes[:, 1] + 1
+    #     landmark[:, 0::2] = (np.tile(w, (5, 1)) * landmark[:, 0::2].T + np.tile(boxes[:, 0], (5, 1)) - 1).T
+    #     landmark[:, 1::2] = (np.tile(h, (5, 1)) * landmark[:, 1::2].T + np.tile(boxes[:, 1], (5, 1)) - 1).T
+    #     landmark = np.reshape(landmark, [landmark.shape[0], -1, 2])
+    #     display_instances(image, boxes, landmark)
+    #     plt.show()
