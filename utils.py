@@ -40,19 +40,20 @@ def convert_to_square(bbox):
     -------
     square bbox
     """
-    square_bbox = bbox.copy()
-    w = bbox[:, 2] - bbox[:, 0] + 1
-    h = bbox[:, 3] - bbox[:, 1] + 1
-    max_side = np.maximum(h, w)
+    # square_bbox = bbox.copy()
 
-    square_bbox[:, 0] = bbox[:, 0] + w * 0.5 - max_side * 0.5
-    square_bbox[:, 1] = bbox[:, 1] + h * 0.5 - max_side * 0.5
-    square_bbox[:, 2] = square_bbox[:, 0] + max_side - 1
-    square_bbox[:, 3] = square_bbox[:, 1] + max_side - 1
-    return square_bbox
+    w = bbox[..., 2] - bbox[..., 0] + 1
+    h = bbox[..., 3] - bbox[..., 1] + 1
+    max_side = tf.maximum(h, w)
+
+    square_bbox_x1 = bbox[:, 0] + w * 0.5 - max_side * 0.5
+    square_bbox_y1 = bbox[:, 1] + h * 0.5 - max_side * 0.5
+    square_bbox_x2 = square_bbox_x1 + max_side - 1
+    square_bbox_y2 = square_bbox_y1 + max_side - 1
+    return tf.stack([square_bbox_x1, square_bbox_y1, square_bbox_x2, square_bbox_y2], axis=-1)
 
 
-def pad(bboxes, w, h):
+def pad(bboxes, img_shape):
     """
         pad the the bboxes, alse restrict the size of it
     Parameters:
@@ -76,32 +77,30 @@ def pad(bboxes, w, h):
         tmph, tmpw: numpy array, n x 1
             height and width of the bbox
     """
+    w, h = tf.cast(img_shape[1], tf.float32), tf.cast(img_shape[0], tf.float32)
+
     tmpw, tmph = bboxes[:, 2] - bboxes[:, 0] + 1, bboxes[:, 3] - bboxes[:, 1] + 1
-    num_box = bboxes.shape[0]
+    num_box = tf.shape(bboxes)[0]
 
-    dx, dy = np.zeros((num_box,)), np.zeros((num_box,))
-    edx, edy = tmpw.copy() - 1, tmph.copy() - 1
+    dx, dy = tf.zeros((num_box,)), tf.zeros((num_box,))
+    edx, edy = tmpw - 1, tmph - 1
 
-    x, y, ex, ey = bboxes[:, 0], bboxes[:, 1], bboxes[:, 2], bboxes[:, 3]
+    x, y, ex, ey = bboxes[..., 0], bboxes[..., 1], bboxes[..., 2], bboxes[..., 3]
 
-    tmp_index = np.where(ex > w - 1)
-    edx[tmp_index] = tmpw[tmp_index] + w - 2 - ex[tmp_index]
-    ex[tmp_index] = w - 1
+    edx = tf.where(ex > w - 1, tmpw + w - 2 - ex, edx)
+    ex = tf.where(ex > w - 1, w - 1, ex)
 
-    tmp_index = np.where(ey > h - 1)
-    edy[tmp_index] = tmph[tmp_index] + h - 2 - ey[tmp_index]
-    ey[tmp_index] = h - 1
+    edy = tf.where(ey > h - 1, tmph + h - 2 - ey, edy)
+    ey = tf.where(ey > h - 1, h - 1, ey)
 
-    tmp_index = np.where(x < 0)
-    dx[tmp_index] = 0 - x[tmp_index]
-    x[tmp_index] = 0
+    dx = tf.where(x < 0, 0. - x, dx)
+    x = tf.where(x < 0, 0., x)
 
-    tmp_index = np.where(y < 0)
-    dy[tmp_index] = 0 - y[tmp_index]
-    y[tmp_index] = 0
+    dy = tf.where(y < 0, 0. - y, dy)
+    y = tf.where(y < 0, 0., y)
 
     return_list = [dy, edy, dx, edx, y, ey, x, ex, tmpw, tmph]
-    return_list = [item.astype(np.int32) for item in return_list]
+    return_list = [tf.cast(item, tf.int32) for item in return_list]
     return return_list
 
 
@@ -118,15 +117,13 @@ def calibrate_box(bbox, reg):
     -------
         bboxes after refinement
     """
-
-    bbox_c = bbox.copy()
-    w = bbox[:, 2] - bbox[:, 0] + 1
-    w = np.expand_dims(w, 1)
-    h = bbox[:, 3] - bbox[:, 1] + 1
-    h = np.expand_dims(h, 1)
-    reg_m = np.hstack([w, h, w, h])
+    w = bbox[..., 2] - bbox[..., 0] + 1
+    w = tf.expand_dims(w, 1)
+    h = bbox[..., 3] - bbox[..., 1] + 1
+    h = tf.expand_dims(h, 1)
+    reg_m = tf.concat([w, h, w, h], axis=-1)
     aug = reg_m * reg
-    bbox_c = bbox_c + aug
+    bbox_c = bbox + aug
     return bbox_c
 
 
@@ -171,37 +168,30 @@ def processed_image(img, scale):
     :param scale:
     :return: resized image
     '''
-    height, width, channels = img.shape
-    new_height = int(height * scale)  # resized new height
-    new_width = int(width * scale)  # resized new width
-    new_dim = (new_width, new_height)
-    img_resized = cv2.resize(img, new_dim, interpolation=cv2.INTER_LINEAR)  # resized image
-    # img_resized = img_resized / 255.
+    img_shape = tf.shape(img)
+    img_shape = tf.cast(img_shape, tf.float32)
+    new_shape = tf.cast(img_shape[:2] * scale, tf.int32)
+    img_resized = tf.image.resize(img, new_shape)
     img_resized = (img_resized - 127.5) / 128
     return img_resized
 
 
 def generate_bbox(cls_map, reg, stride, cellsize, scale, threshold):
     # index of class_prob larger than threshold
-    t_index = np.where(cls_map > threshold)
-
-    # find nothing
-    if t_index[0].size == 0:
-        return np.array([])
+    t_index = tf.where(cls_map > threshold)
+    if tf.size(t_index) == 0:
+        return tf.cast([], tf.float32)
     # offset
-    dx1, dy1, dx2, dy2 = [reg[t_index[0], t_index[1], i] for i in range(4)]
-
-    reg = np.array([dx1, dy1, dx2, dy2])
-    score = cls_map[t_index[0], t_index[1]]
-    boundingbox = np.vstack([
-        np.round((stride * t_index[1]) / scale),
-        np.round((stride * t_index[0]) / scale),
-        np.round((stride * t_index[1] + cellsize) / scale),
-        np.round((stride * t_index[0] + cellsize) / scale),
-        score,
-        reg])
-
-    return boundingbox.T
+    reg = tf.gather_nd(reg, t_index)
+    score = tf.gather_nd(cls_map, t_index)[..., tf.newaxis]
+    t_index = tf.cast(t_index, tf.float32)
+    bbox = tf.stack([stride * t_index[..., 1],
+                     stride * t_index[..., 0],
+                     stride * t_index[..., 1] + cellsize,
+                     stride * t_index[..., 0] + cellsize], axis=-1)
+    bbox = bbox / scale
+    boundingbox = tf.concat([bbox, score, reg], axis=1)
+    return boundingbox
 
 
 def py_nms(boxes, scores, max_boxes=50, iou_thresh=0.5, mode="Union"):
@@ -249,19 +239,22 @@ def py_nms(boxes, scores, max_boxes=50, iou_thresh=0.5, mode="Union"):
 
 
 def clip_bbox(bbox, image_size):
-    # bbox format is y_min, x_min, y_max, x_max
-    bbox[..., :2] = np.maximum(1, bbox[..., :2])
-    bbox[..., 2:] = np.minimum(np.array([image_size[1], image_size[0]]) - 1, bbox[..., 2:])
-    return bbox
+    # bbox format is x_min, y_min, x_max, y_max
+    xy_min = tf.maximum(1., bbox[..., :2])
+    xy_max = tf.minimum(tf.cast([image_size[1], image_size[0]], tf.float32) - 1.,
+                        bbox[..., 2:])
+    return tf.concat([xy_min, xy_max], axis=-1)
 
 
-def display_instances(image, boxes, landmarks=None, scores=None,
-                      figsize=(12, 12), ax=None, score_threshold=0.5, captions=None):
+def display_instances(image, boxes, class_names=None, class_ids=None,
+                      landmarks=None, scores=None, figsize=(12, 12), ax=None,
+                      score_threshold=0.5, captions=None):
     # Number of instances
     if boxes is None or not boxes.shape[0]:
         print("\n*** No instances to display *** \n")
         return
-    class_ids = np.zeros([boxes.shape[0]], dtype=int)
+    if class_ids is None:
+        class_ids = np.zeros([boxes.shape[0]], dtype=int)
     if not ax:
         _, ax = plt.subplots(1, figsize=figsize)
 
@@ -285,12 +278,14 @@ def display_instances(image, boxes, landmarks=None, scores=None,
                               alpha=0.7, linestyle="dashed",
                               edgecolor=color, facecolor='none')
         ax.add_patch(p)
-        # if not captions:
-        #     caption = "{:.3f}".format(score)
-        # else:
-        #     caption = captions[i]
-        # ax.text(x1, y1 - 10, caption,
-        #         color=color, size=12, backgroundcolor="none")
+        if not captions:
+            class_id = class_ids[i]
+            label = class_names[class_id] if class_names is not None else ''
+            caption = "{} {:.3f}".format(label, score) if score < 1. else label
+        else:
+            caption = captions[i]
+        ax.text(x1, y1 - 10, caption,
+                color=color, size=12, backgroundcolor="none")
         if landmarks is not None:
             for landmark in landmarks[i]:
                 c = patches.Circle(landmark, radius=(h / 25 + w / 25) / 2, edgecolor=(1, 0, 0), facecolor='none')
